@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+nasa_venv/
+venv/
+
+# Mac
+.DS_Store
+
+# Models / large files
+*.pkl
+
+# Data (optional)
+# CMAPSSData/

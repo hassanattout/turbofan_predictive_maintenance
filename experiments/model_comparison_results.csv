@@ -1,0 +1,4 @@
+Model,RMSE
+Linear Regression,44.34
+Random Forest,41.52
+XGBoost,41.49
