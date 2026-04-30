@@ -1,16 +1,13 @@
-# Python
 __pycache__/
 *.pyc
-
-# Virtual environments
-nasa_venv/
-venv/
-
-# Mac
 .DS_Store
+.env
+.venv/
+venv/
+.ipynb_checkpoints/
 
-# Models / large files
-*.pkl
+data/raw/
+*.csv
 
-# Data (optional)
-# CMAPSSData/
+models/*
+!models/rf_model.pkl
