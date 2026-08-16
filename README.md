@@ -1,319 +1,156 @@
-# 🚀 Predictive Maintenance – Turbofan RUL Prediction (NASA C-MAPSS)
+# Turbofan Remaining Useful Life Prediction
 
 [![Live App](https://img.shields.io/badge/Streamlit-Live_App-red)](https://turbofan-rul-dashboard.streamlit.app)
-[![Python](https://img.shields.io/badge/Python-3.10+-blue)]()
-[![Machine Learning](https://img.shields.io/badge/ML-Random_Forest%20%2B%20XGBoost-green)]()
+[![CI](https://github.com/hassanattout/turbofan_predictive_maintenance/actions/workflows/ci.yml/badge.svg)](https://github.com/hassanattout/turbofan_predictive_maintenance/actions/workflows/ci.yml)
 
----
+An educational predictive-maintenance system built with NASA C-MAPSS turbofan degradation data. The project combines causal temporal feature engineering, engine-level validation, a Streamlit dashboard and a FastAPI inference interface.
 
-## 🚀 Live Demo
+> This is a research and portfolio demonstration. It is not an aviation-certified maintenance or safety system.
 
-Try the deployed dashboard here:
+## Why the methodology matters
 
-👉 https://turbofan-rul-dashboard.streamlit.app
+Turbofan datasets contain many correlated cycles from each engine. Randomly splitting individual rows can place cycles from the same engine in both training and validation, producing an overly optimistic score.
 
----
+This project therefore holds out complete engines with `GroupShuffleSplit`. No engine ID is allowed to appear in both partitions.
 
-## 📸 Dashboard Preview
+The model uses five-cycle rolling statistics and sensor trends. The API also requires an ordered history of at least five observations, preventing training-serving skew caused by replacing temporal features with fabricated zeros.
 
-### RUL Predictions & Trends
-![Dashboard](visuals/dashboard_preview.png)
+## Architecture
 
-### API Interface (FastAPI)
-![API Docs](visuals/api_docs.png)
-
----
-
-## 📌 Overview
-
-This project uses machine learning on NASA’s **C-MAPSS dataset** to estimate Remaining Useful Life (RUL), identify engines at risk of failure, and support maintenance decisions through an interactive dashboard, FastAPI endpoint, and cost-based threshold optimization.
-
-> The system goes beyond prediction by integrating machine learning, decision logic, and cost optimization to approximate real-world industrial maintenance strategies.
-
----
-
-## 🧩 System Architecture
+```text
+NASA C-MAPSS history
+        ↓
+Causal per-engine features
+        ↓
+Complete-engine train/validation split
+        ↓
+Random Forest RUL model
+        ↓
+FastAPI + Streamlit
+```
 
 ![Architecture](visuals/architecture.png)
 
-The system separates data processing, modeling, and deployment layers, enabling real-time inference and scalable integration into industrial workflows.
+## Features
 
----
+- Remaining Useful Life target construction
+- 21 sensor signals and three operating settings
+- Per-engine rolling mean and standard deviation
+- Per-engine cycle-to-cycle trends
+- Complete-engine validation holdout
+- FastAPI prediction from ordered sensor histories
+- Streamlit exploration and risk-threshold demonstration
+- Automated tests for engine isolation and feature consistency
 
-## 💼 Why This Matters
+## Evaluation status
 
-Unplanned equipment failure is extremely costly in industries like aviation and energy.
+The earlier row-level validation result of approximately 35.6 cycles was produced with a split that could place observations from the same engine in both partitions. It is intentionally not presented as the current validated result.
 
-Predictive maintenance enables:
-- Early detection of failures
-- Reduced operational downtime
-- Lower maintenance costs
-- Improved safety and reliability
+After downloading C-MAPSS FD001, rerun:
 
----
+```bash
+python src/training/train_model.py
+```
 
-## 🎯 Key Results
+The script will report RMSE on complete held-out engines and regenerate the validation figure. This README should only be updated with that new score after the corrected run completes.
 
-- Built a complete predictive maintenance pipeline (data → model → dashboard)  
-- Estimated Remaining Useful Life (RUL) from real-world turbofan data  
-- Achieved validation **RMSE ≈ 35.6 cycles** after time-series feature engineering 
-- Developed an interactive **Streamlit dashboard** for real-time predictions  
-- Deployed an end-to-end ML system (dashboard + API) for real-time inference and maintenance decision support  
-- Reduced maintenance cost by optimizing decision threshold (RUL = 10 cycles), outperforming baseline strategy
-  
----
+## Run locally
 
-## 📊 Model Performance
+```bash
+git clone https://github.com/hassanattout/turbofan_predictive_maintenance.git
+cd turbofan_predictive_maintenance
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-![Predicted vs Actual RUL](visuals/predicted_vs_actual_RUL.png)
+Place the NASA FD001 files under:
 
-**RMSE:** 35.6 cycles  
+```text
+data/raw/CMAPSSData/
+├── train_FD001.txt
+├── test_FD001.txt
+└── RUL_FD001.txt
+```
 
-### Insight
+Train the model:
 
-Introducing time-series features (rolling mean, rolling std, and trends) significantly improved model performance from ~41 cycles to ~35.6 cycles.
+```bash
+python src/training/train_model.py
+```
 
-This highlights that engine degradation is inherently temporal, and capturing historical behavior is critical for accurate Remaining Useful Life prediction.
+Run the dashboard:
 
----
+```bash
+streamlit run app.py
+```
 
-## 🔍 Feature Importance
-
-![Feature Importance](visuals/feature_importance.png)
-
-### Insight
-
-A small subset of engineered features dominates the prediction, particularly rolling statistics of key sensors.
-
-This indicates that temporal degradation patterns are concentrated in specific signals, which the model leverages strongly.
-
----
-
-## 📊 Model Comparison
-
-| Model | RMSE |
-|------|------|
-| Linear Regression | 44.34 |
-| Random Forest (baseline) | 41.52 |
-| Random Forest (time-series features) | 35.6 |
-| XGBoost | 41.49 |
-
-![Model Comparison](visuals/model_comparison.png)
-
-### Insight
-
-Tree-based models outperform linear regression, confirming the nonlinear nature of degradation.
-
-However, performance gains between Random Forest and XGBoost are limited, indicating that feature engineering (especially time-series features) is the main driver of performance improvement.
-
----
-
-## ⏱ Time-Series Feature Engineering
-
-To better capture degradation patterns over time, additional features were engineered:
-
-- Rolling mean (window = 5 cycles)
-- Rolling standard deviation
-- Sensor trend (cycle-to-cycle variation)
-
-These features allow the model to capture temporal dynamics of engine degradation.
-
-### Impact
-
-Introducing time-series features improved model performance:
-
-- RMSE reduced from ~41 cycles → ~35.6 cycles
-
-This confirms that system degradation is inherently temporal and cannot be effectively modeled using static features alone.
-
----
-
-## 🛠 Maintenance Decision Logic
-
-Predicted RUL is translated into operational actions:
-
-- RUL < 20 cycles → Immediate maintenance required  
-- RUL < 50 cycles → Schedule maintenance soon  
-- RUL ≥ 50 cycles → Normal operation  
-
-This bridges the gap between machine learning predictions and real-world maintenance decision-making.
-
----
-
-## 🧠 Methodology
-
-- Loaded and processed NASA C-MAPSS dataset  
-- Computed Remaining Useful Life (RUL) per engine cycle  
-- Used **21 sensors + 3 operational settings** with rolling statistics and trend-based features   
-- Split dataset into training and validation sets  
-- Trained and compared **Linear Regression, Random Forest, and XGBoost models**  
-- Applied **GridSearchCV** for hyperparameter tuning  
-- Evaluated using RMSE and visual analysis  
-
----
-
-## 💰 Business Impact & Threshold Optimization
-
-![Threshold Optimization](visuals/threshold_optimization.png)
-
-A simplified cost model was used:
-
-- Failure cost: 100,000 €  
-- Preventive maintenance cost: 10,000 €  
-
-### Results
-
-| Threshold | Total Cost (€) |
-|----------|----------------|
-| No model | 10,000,000 |
-| 10 | **9,690,000** |
-| 20 | 19,030,000 |
-| 30 | 28,150,000 |
-| 40 | 36,780,000 |
-| 50 | 45,800,000 |
-
-**Optimal threshold (RUL = 10 cycles) reduces total cost below baseline.**
-
-### Insight
-
-Predictive maintenance does not automatically reduce costs.
-
-Without proper decision thresholds, the system can trigger excessive maintenance and increase operational cost.
-
-By optimizing the maintenance threshold, total cost was reduced below the baseline, demonstrating that predictive maintenance is both a modeling and a decision optimization problem.
-
----
-
-## 🛠 Features
-
-- End-to-end machine learning pipeline  
-- Time-series feature engineering (rolling statistics, trends) 
-- Hyperparameter tuning with cross-validation  
-- Visualization of predicted vs actual RUL  
-- Interactive dashboard for real-time predictions  
-- FastAPI deployment for real-time inference  
-- Maintenance decision logic based on predicted RUL  
-- Demo dataset generator for quick testing  
-
----
-
-## ⚙️ API (FastAPI)
-
-This project includes a deployable API for real-time RUL prediction.
-
-### Run locally
+Run the API:
 
 ```bash
 uvicorn src.api.main:app --reload
 ```
 
-### Endpoints
+Run tests:
 
-- `GET /` → health check
-- `POST /predict` → predict Remaining Useful Life from sensor data
+```bash
+pytest -q
+```
 
-### Example Output
+## API contract
+
+`POST /predict` accepts an ordered list of at least five readings:
 
 ```json
 {
-  "predicted_rul": 168.34,
-  "decision": "Normal operation"
+  "readings": [
+    {
+      "setting_1": 0.0,
+      "setting_2": 0.0,
+      "setting_3": 100.0,
+      "sensor_1": 518.67,
+      "sensor_2": 641.82,
+      "sensor_3": 1589.7,
+      "sensor_4": 1400.6,
+      "sensor_5": 14.62,
+      "sensor_6": 21.61,
+      "sensor_7": 554.36,
+      "sensor_8": 2388.06,
+      "sensor_9": 9046.19,
+      "sensor_10": 1.3,
+      "sensor_11": 47.47,
+      "sensor_12": 521.66,
+      "sensor_13": 2388.02,
+      "sensor_14": 8138.62,
+      "sensor_15": 8.4195,
+      "sensor_16": 0.03,
+      "sensor_17": 392,
+      "sensor_18": 2388,
+      "sensor_19": 100,
+      "sensor_20": 39.06,
+      "sensor_21": 23.419
+    }
+  ]
 }
 ```
 
----
+The example is abbreviated conceptually: supply at least five complete objects ordered from oldest to newest.
 
-## 🧪 How to Run
+## Limitations
 
-### 1. Clone the repository
-```bash
-git clone https://github.com/hassanattout/turbofan_predictive_maintenance.git
-cd turbofan_predictive_maintenance
-```
+- The current model is a Random Forest, not a sequence neural network.
+- Results are dataset and operating-condition specific.
+- The decision thresholds are illustrative and require operational validation.
+- The cost simulation uses assumed costs, not measured business savings.
+- The dashboard does not replace maintenance engineering judgment.
+- Official C-MAPSS test-set evaluation and the NASA asymmetric score remain future improvements.
 
-### 2. Install dependencies
-```bash
-python3 -m pip install -r requirements.txt
-```
+## Author
 
-### 3. Train the model
-```bash
-python3 src/training/train_model.py
-```
-
-### 4. Launch the dashboard
-```bash
-streamlit run src/dashboard/app.py
-```
-
----
-
-## 🗂️ Repository Structure
-
-```text
-turbofan_predictive_maintenance/
-│
-├── src/
-│   ├── api/
-│   │   └── main.py
-│   ├── dashboard/
-│   │   └── app.py
-│   ├── training/
-│   │   ├── train_model.py
-│   │   └── predict.py
-│   └── utils/
-│       └── generate_visuals.py
-│
-├── data/
-│   └── raw/
-│       └── CMAPSSData/
-│
-├── models/
-│   └── rf_model.pkl
-│
-├── visuals/
-├── experiments/
-│
-├── README.md
-├── requirements.txt
-├── LICENSE
-└── .gitignore
-```
-
----
-
-## ⚠️ Notes
-
-The trained model is stored in `models/rf_model.pkl`.
-
-If the model file is missing, train it with:
-
-```bash
-python3 src/training/train_model.py
-```
-
-Place the NASA C-MAPSS dataset inside:
-data/raw/CMAPSSData/
----
-
-## 📌 Future Improvements
-
-- Explore deep learning-based time-series models (LSTM / GRU) to capture temporal dependencies more directly  
-- Use additional datasets (FD002–FD004) for more complex degradation scenarios  
-- Add SHAP-based model explainability  
-- Add alerting system for low RUL engines  
-- Improve deployed dashboard UI and add downloadable prediction reports  
-
----
-
-## 👨‍💻 Author
 Hassan Attout  
-Machine Learning & Energy Systems    
-LinkedIn: https://www.linkedin.com/in/hassanattout
+Mechanical engineer focused on energy systems, industrial AI and ML deployment  
+[LinkedIn](https://www.linkedin.com/in/hassanattout)
 
----
+## License
 
-## 📄 License
-
-This project is licensed under the MIT License.
-
+MIT
