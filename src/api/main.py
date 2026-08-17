@@ -1,14 +1,33 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from pathlib import Path
+
 import joblib
 import pandas as pd
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="Turbofan RUL Prediction API")
+from src.features import (
+    BASE_FEATURES,
+    ROLLING_WINDOW,
+    latest_feature_row,
+    maintenance_decision,
+)
 
-model = joblib.load("models/rf_model.pkl")
+ROOT_DIR = Path(__file__).resolve().parents[2]
+MODEL_PATH = ROOT_DIR / "models" / "rf_model.pkl"
+
+app = FastAPI(
+    title="Turbofan RUL Prediction API",
+    version="2.0.0",
+    description=(
+        "Predict RUL from an ordered sensor history. "
+        "At least five cycles are required because the model uses "
+        "rolling and trend features."
+    ),
+)
+model = joblib.load(MODEL_PATH)
 
 
-class SensorData(BaseModel):
+class SensorReading(BaseModel):
     setting_1: float
     setting_2: float
     setting_3: float
@@ -35,45 +54,45 @@ class SensorData(BaseModel):
     sensor_21: float
 
 
-def maintenance_decision(rul):
-    if rul < 20:
-        return "Immediate maintenance required"
-    elif rul < 50:
-        return "Schedule maintenance soon"
-    else:
-        return "Normal operation"
-
-
-def add_time_series_features_single(df):
-    for sensor in [f"sensor_{i}" for i in range(1, 22)]:
-        df[f"{sensor}_roll_mean"] = df[sensor]
-        df[f"{sensor}_roll_std"] = 0
-        df[f"{sensor}_trend"] = 0
-
-    return df
+class PredictionRequest(BaseModel):
+    readings: list[SensorReading] = Field(
+        min_length=ROLLING_WINDOW,
+        max_length=500,
+        description="Ordered oldest-to-newest engine observations.",
+    )
 
 
 @app.get("/")
 def home():
-    return {"status": "API is running"}
+    return {
+        "status": "API is running",
+        "model_input": f"At least {ROLLING_WINDOW} ordered cycles",
+    }
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "model_loaded": model is not None,
+        "model_path": str(MODEL_PATH.name),
+    }
 
 
 @app.post("/predict")
-def predict(data: SensorData):
-    df = pd.DataFrame([data.dict()])
-    df = add_time_series_features_single(df)
-
-    expected_features = list(model.feature_names_in_)
-
-    for col in expected_features:
-        if col not in df.columns:
-            df[col] = 0
-
-    df = df[expected_features]
-
-    prediction = model.predict(df)[0]
+def predict(request: PredictionRequest):
+    history = pd.DataFrame(
+        [reading.model_dump() for reading in request.readings],
+        columns=BASE_FEATURES,
+    )
+    try:
+        features = latest_feature_row(history)
+        prediction = float(model.predict(features)[0])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return {
-        "predicted_rul": round(float(prediction), 2),
-        "decision": maintenance_decision(prediction)
+        "predicted_rul": round(prediction, 2),
+        "decision": maintenance_decision(prediction),
+        "cycles_used": len(history),
     }

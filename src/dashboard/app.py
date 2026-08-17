@@ -1,124 +1,115 @@
-import streamlit as st
-import pandas as pd
+from pathlib import Path
+
 import joblib
 import matplotlib.pyplot as plt
+import pandas as pd
 import seaborn as sns
-import os
+import streamlit as st
 
-MODEL_FOLDER = "models"
-MODEL_FILENAME = os.path.join(MODEL_FOLDER, "rf_model.pkl")
+from src.features import (
+    BASE_FEATURES,
+    MODEL_FEATURES,
+    ROLLING_WINDOW,
+    add_time_series_features,
+)
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+MODEL_PATH = ROOT_DIR / "models" / "rf_model.pkl"
 THRESHOLD = 50
 
-if not os.path.exists(MODEL_FILENAME):
-    st.error(
-        "Model file not found. Please run `python3 turbofan.py` first "
-        "to generate `models/rf_model.pkl`."
-    )
-    st.stop()
+st.set_page_config(page_title="Turbofan Predictive Maintenance", layout="wide")
+
 
 @st.cache_resource
 def load_model():
-    return joblib.load(MODEL_FILENAME)
+    return joblib.load(MODEL_PATH)
+
+
+if not MODEL_PATH.exists():
+    st.error("Model file not found. Run python src/training/train_model.py first.")
+    st.stop()
 
 model = load_model()
 
-st.title("Turbofan Engine Predictive Maintenance Dashboard")
+st.title("Turbofan Engine Predictive Maintenance")
 st.caption(
-    "Predict Remaining Useful Life from turbofan engine sensor data "
-    "and flag critical degradation risk."
+    "NASA C-MAPSS educational demo using ordered engine histories. "
+    "This is not an aviation-certified maintenance system."
 )
-st.write("Upload your engine CSV and get predicted Remaining Useful Life.")
+st.write(
+    "Upload a CSV containing engine_id, cycle, three operating settings "
+    "and 21 sensor columns."
+)
 
-st.sidebar.title("Project Info")
-st.sidebar.write("NASA C-MAPSS predictive maintenance demo")
-st.sidebar.write(f"Critical RUL threshold: {THRESHOLD} cycles")
+st.sidebar.title("Method")
 st.sidebar.write("Model: Random Forest Regressor")
+st.sidebar.write(f"Rolling window: {ROLLING_WINDOW} cycles")
+st.sidebar.write("Validation: complete held-out engines")
+st.sidebar.write(f"Alert threshold: {THRESHOLD} predicted cycles")
 
-uploaded_file = st.file_uploader("Upload engine CSV", type="csv")
+uploaded_file = st.file_uploader("Upload engine-history CSV", type="csv")
 
 if uploaded_file:
     data = pd.read_csv(uploaded_file)
+    required = ["engine_id", "cycle", *BASE_FEATURES]
+    missing = [column for column in required if column not in data.columns]
 
-    features = ["setting_1", "setting_2", "setting_3"] + [
-        f"sensor_{i}" for i in range(1, 22)
-    ]
-
-    missing_cols = [col for col in features if col not in data.columns]
-
-    if missing_cols:
-        st.error(f"Missing columns in CSV: {missing_cols}")
+    if missing:
+        st.error(f"Missing columns: {missing}")
         st.stop()
 
-    predictions = model.predict(data[features])
-    data["Predicted_RUL"] = predictions
+    counts = data.groupby("engine_id").size()
+    short_engines = counts[counts < ROLLING_WINDOW].index.tolist()
+    if short_engines:
+        st.warning(
+            "Some engines contain fewer than five cycles. Early-cycle "
+            "predictions use partial histories with zero-filled trend/std "
+            f"values: {short_engines[:10]}"
+        )
+
+    data = add_time_series_features(data)
+    data["Predicted_RUL"] = model.predict(data[MODEL_FEATURES])
 
     st.subheader("Predictions")
-
-    display_cols = ["Predicted_RUL"]
-    if "engine_id" in data.columns:
-        display_cols.insert(0, "engine_id")
-    if "cycle" in data.columns:
-        display_cols.insert(1, "cycle")
-
-    st.dataframe(data[display_cols].head(100))
-
-    with st.expander("View full uploaded dataset"):
-        st.dataframe(data)
-
-    st.subheader("Predicted RUL Summary")
+    st.dataframe(
+        data[["engine_id", "cycle", "Predicted_RUL"]].head(100),
+        use_container_width=True,
+    )
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Min RUL", f"{data['Predicted_RUL'].min():.1f}")
-    col2.metric("Avg RUL", f"{data['Predicted_RUL'].mean():.1f}")
-    col3.metric("Max RUL", f"{data['Predicted_RUL'].max():.1f}")
+    col1.metric("Minimum predicted RUL", f"{data['Predicted_RUL'].min():.1f}")
+    col2.metric("Average predicted RUL", f"{data['Predicted_RUL'].mean():.1f}")
+    col3.metric("Maximum predicted RUL", f"{data['Predicted_RUL'].max():.1f}")
 
-    low_rul = data[data["Predicted_RUL"] < THRESHOLD]
-
-    if not low_rul.empty:
+    critical = data[data["Predicted_RUL"] < THRESHOLD]
+    if critical.empty:
+        st.success("No predictions are below the demonstration threshold.")
+    else:
         st.error(
-            f"{len(low_rul)} critical predictions: "
-            f"RUL below {THRESHOLD} cycles"
+            f"{len(critical)} observations are below the "
+            f"{THRESHOLD}-cycle demonstration threshold."
         )
-    else:
-        st.success("No critical low-RUL predictions detected.")
 
-    st.subheader("RUL Trend Over Time")
-
-    if "engine_id" in data.columns and "cycle" in data.columns:
-        engine_ids = sorted(data["engine_id"].unique())
-        selected_engine = st.selectbox("Select Engine ID", engine_ids)
-
-        engine_data = data[data["engine_id"] == selected_engine]
-        st.line_chart(engine_data.set_index("cycle")["Predicted_RUL"])
-
-        st.caption(f"Displaying RUL trend for Engine {selected_engine}")
-    else:
-        st.line_chart(data["Predicted_RUL"])
+    engine_ids = sorted(data["engine_id"].unique())
+    selected_engine = st.selectbox("Select engine", engine_ids)
+    engine_data = data[data["engine_id"] == selected_engine]
+    st.line_chart(
+        engine_data.set_index("cycle")["Predicted_RUL"],
+        use_container_width=True,
+    )
 
     if "RUL" in data.columns:
-        st.subheader("Predicted vs Actual RUL")
-
-        fig, ax = plt.subplots(figsize=(10, 5))
+        st.subheader("Predicted vs actual RUL")
+        figure, axis = plt.subplots(figsize=(9, 5))
         sns.scatterplot(
             x=data["RUL"],
             y=data["Predicted_RUL"],
             alpha=0.5,
-            ax=ax,
+            ax=axis,
         )
-
-        max_val = max(data["RUL"].max(), data["Predicted_RUL"].max())
-        ax.plot([0, max_val], [0, max_val], linestyle="--")
-
-        ax.set_xlabel("Actual RUL")
-        ax.set_ylabel("Predicted RUL")
-        ax.set_title("Predicted vs Actual RUL")
-
-        st.pyplot(fig)
-        plt.close(fig)
-
-if os.path.exists("predicted_vs_actual_RUL.png"):
-    st.subheader("Model Performance Overview")
-    st.image(
-        "predicted_vs_actual_RUL.png",
-        caption="Predicted vs Actual RUL on validation data",
-    )
+        maximum = max(data["RUL"].max(), data["Predicted_RUL"].max())
+        axis.plot([0, maximum], [0, maximum], linestyle="--")
+        axis.set_xlabel("Actual RUL")
+        axis.set_ylabel("Predicted RUL")
+        st.pyplot(figure)
+        plt.close(figure)
